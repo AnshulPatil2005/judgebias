@@ -23,3 +23,22 @@ Click GO again yourself.
 When the results table (rows with “View” buttons) finally appears,
 → then press ENTER in the terminal.
 
+## Installation
+
+```bash
+pip install playwright pandas
+playwright install
+
+Small test (one year, capped rows):
+
+python gujarat_hc_AO_turbo.py --years 2018 --max-per-year 5
+
+
+Full sweep (2018–2025, all rows):
+
+python gujarat_hc_AO_turbo.py --years 2018-2025 --max-per-year 0
+
+
+The script creates/appends to:
+
+gujarat_hc_AO_2018_2025_details.csv
