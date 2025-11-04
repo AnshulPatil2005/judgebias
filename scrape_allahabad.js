@@ -46,7 +46,9 @@ const CASE_TYPE_SELECTOR_CANDIDATES = [
   'select[id*="case_type"]'
 ];
 
-const CASE_TYPE_OPTION_REGEX = /A227\s+MATTERS\s+UNDER\s+ARTICLE\s+227/i;
+const CASE_TYPE_OPTION_REGEX = /\bA\s*-?\s*227\b|MATTERS\s+UNDER\s+ARTICLE\s+227/i;
+const HIGH_COURT_OPTION_REGEX = /allahabad/i;
+const BENCH_OPTION_REGEX = /\b(allahabad|lucknow)\b/i;
 
 function regexSource(optionMatcher) {
   return optionMatcher instanceof RegExp ? optionMatcher.source : String(optionMatcher);
@@ -92,6 +94,7 @@ async function selectDropdownOption(scope, selectors, optionRegex, label) {
         return opts.find((opt) => regex.test(opt.text) || regex.test(opt.value)) || null;
       }, matcherSource);
       if (!match) continue;
+      let manualDispatch = false;
       await dropdown.selectOption(match.value).catch(async () => {
         await dropdown.selectOption({ label: match.text }).catch(async () => {
           await dropdown.evaluate((el, value) => {
@@ -99,8 +102,15 @@ async function selectDropdownOption(scope, selectors, optionRegex, label) {
             el.dispatchEvent(new Event('input', { bubbles: true }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
           }, match.value);
+          manualDispatch = true;
         });
       });
+      if (!manualDispatch) {
+        await dropdown.evaluate((el) => {
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }).catch(() => {});
+      }
       console.log(`${label}: selected "${match.text || match.value}"`);
       return true;
     } catch {}
@@ -159,14 +169,108 @@ async function selectOptionFromDropdown(dropdown, optionRegex, label) {
   return confirmed;
 }
 
+async function selectFirstSelectableOption(dropdown, label) {
+  if (!dropdown) return false;
+  try { await dropdown.scrollIntoViewIfNeeded().catch(() => {}); } catch {}
+
+  const option = await dropdown.evaluate((el) => {
+    const opts = Array.from(el.options || []);
+    const candidate = opts.find((opt) => {
+      const text = (opt.textContent || '').trim();
+      const value = (opt.value || '').trim();
+      if (opt.disabled) return false;
+      if (!value && !text) return false;
+      if (/select/i.test(text)) return false;
+      return true;
+    });
+    if (!candidate) return null;
+    return { value: candidate.value, text: (candidate.textContent || '').trim() };
+  }).catch(() => null);
+
+  if (!option) return false;
+
+  let manualDispatch = false;
+  await dropdown.selectOption(option.value).catch(async () => {
+    await dropdown.selectOption({ label: option.text }).catch(async () => {
+      await dropdown.evaluate((el, value) => {
+        el.value = value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      }, option.value);
+      manualDispatch = true;
+    });
+  });
+  if (!manualDispatch) {
+    await dropdown.evaluate((el) => {
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }).catch(() => {});
+  }
+
+  const confirmed = await dropdown.evaluate((el, value, text) => {
+    const opt = el.options?.[el.selectedIndex];
+    if (!opt) return false;
+    const selectedValue = String(opt.value || '').trim();
+    const selectedText = (opt.textContent || '').trim();
+    return selectedValue === value || selectedText === text;
+  }, option.value, option.text).catch(() => false);
+
+  if (confirmed) console.log(`${label}: selected "${option.text || option.value}"`);
+  else console.warn(`${label}: fallback selection may not have stuck.`);
+
+  return confirmed;
+}
+
+async function buildGenericScopes(scope) {
+  const page = owningPage(scope);
+  const scopes = [];
+  const seen = new Set();
+  const push = (candidate) => {
+    if (candidate && !seen.has(candidate)) {
+      seen.add(candidate);
+      scopes.push(candidate);
+    }
+  };
+  push(scope);
+  push(page);
+  try { push(await getFormScope(page)); } catch {}
+  for (const frame of page.frames()) push(frame);
+  return scopes;
+}
+
 async function selectHighCourt(scope) {
-  return selectDropdownOption(scope, HIGH_COURT_SELECTOR_CANDIDATES, /allahabad/, 'High Court');
+  const scopes = await buildGenericScopes(scope);
+  return selectFromScopes(scopes, HIGH_COURT_SELECTOR_CANDIDATES, HIGH_COURT_OPTION_REGEX, 'High Court');
 }
 
 async function selectBench(scope) {
-  const ready = await waitForDropdownOption(scope, BENCH_SELECTOR_CANDIDATES, /allahabad/);
-  if (!ready) console.warn('Bench: options not ready after waiting, trying anyway.');
-  return selectDropdownOption(scope, BENCH_SELECTOR_CANDIDATES, /allahabad/, 'Bench');
+  const scopes = await buildGenericScopes(scope);
+  const matchedScope = await selectFromScopes(scopes, BENCH_SELECTOR_CANDIDATES, BENCH_OPTION_REGEX, 'Bench');
+  if (matchedScope) return matchedScope;
+
+  const deadline = Date.now() + 8000;
+  const joinedSelectors = BENCH_SELECTOR_CANDIDATES.join(', ');
+  while (Date.now() < deadline) {
+    for (const candidateScope of scopes) {
+      const dropdown = candidateScope.locator(joinedSelectors).first();
+      if (!(await dropdown.count())) continue;
+      if (!await dropdown.isVisible().catch(() => false)) continue;
+      const hasUsable = await dropdown.evaluate((el) => {
+        return Array.from(el.options || []).some((opt) => {
+          const text = (opt.textContent || '').trim();
+          const value = (opt.value || '').trim();
+          if (opt.disabled) return false;
+          if (!value && !text) return false;
+          return !/select/i.test(text);
+        });
+      }).catch(() => false);
+      if (!hasUsable) continue;
+      if (await selectFirstSelectableOption(dropdown, 'Bench')) return candidateScope;
+    }
+    await wait(200);
+  }
+  console.warn('Bench: unable to locate dropdown with usable options, please select manually.');
+  return null;
 }
 
 // Gracefully click any visible "OK" button rendered as part of a JS modal (not a native alert).
@@ -540,11 +644,16 @@ async function processResultPages(page, yearOutputDir) {
   let formScope = await getFormScope(page);
 
   // Court & Bench (idempotent)
-  if (!await selectByLabel(formScope, /high\s*court/i, /allahabad/i).catch(() => false)) {
-    await selectHighCourt(formScope);
+  let highCourtScope = formScope;
+  const highCourtViaLabel = await selectByLabel(formScope, /high\s*court/i, /allahabad/i).catch(() => false);
+  if (!highCourtViaLabel) {
+    const selectedScope = await selectHighCourt(formScope);
+    if (selectedScope) highCourtScope = selectedScope;
+    else console.warn('High Court: selection helper did not find a matching dropdown.');
   }
   await wait(HUMAN_DELAY);
-  await selectBench(formScope);
+  const benchScope = await selectBench(highCourtScope);
+  if (!benchScope) console.warn('Bench: selection helper did not find a matching dropdown.');
   await wait(HUMAN_DELAY);
 
   const initialCaseType = await selectCaseType(formScope);
@@ -559,12 +668,16 @@ async function processResultPages(page, yearOutputDir) {
     formScope = await getFormScope(page);
     await ensureCaseTypeTab(page);
 
+    let yearHighCourtScope = formScope;
     const highCourtViaLabel = await selectByLabel(formScope, /high\s*court/i, /allahabad/i).catch(() => false);
     if (!highCourtViaLabel) {
-      await selectHighCourt(formScope);
+      const selectedScope = await selectHighCourt(formScope);
+      if (selectedScope) yearHighCourtScope = selectedScope;
+      else console.warn('High Court: yearly selection helper did not find a matching dropdown.');
     }
     await wait(HUMAN_DELAY);
-    await selectBench(formScope);
+    const yearBenchScope = await selectBench(yearHighCourtScope);
+    if (!yearBenchScope) console.warn('Bench: yearly selection helper did not find a matching dropdown.');
     await wait(HUMAN_DELAY);
 
     const caseTypeSelected = await selectCaseType(formScope);
