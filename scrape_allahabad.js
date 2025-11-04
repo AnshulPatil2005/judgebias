@@ -1,84 +1,62 @@
-// scrape_allahabad.js
-// Automates: Case Status -> Allahabad High Court (court+bench) -> Case Type A227 -> Years 2018..2025 -> downloads all orders.
-
-const { chromium } = require('playwright');
-const fs = require('fs');
-const path = require('path');
-
-const START_YEAR = 2018;
-const END_YEAR = 2025;
-const DOWNLOAD_BASE = path.resolve(__dirname, 'downloads');
-
-const HUMAN_DELAY = 400;
-const NAV_TIMEOUT = 45_000;
-const SLOW_NET_WAIT = 2500;
-
-function ensureDir(p) { if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); }
-function sanitize(s) { return String(s).replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_').slice(0, 180); }
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-
-const HIGH_COURT_SELECTOR_CANDIDATES = [
-  'select#sess_state_code',
-  'select[name="sess_state_code"]',
-  'select[id*="highcourt"]',
-  'select[name*="highcourt"]',
-  'select[name*="high_court"]',
-  'select#highcourt',
-  'select[name*="court_code"]',
-  'select#court_code'
-];
-
-const BENCH_SELECTOR_CANDIDATES = [
-  'select#court_complex_code',
-  'select[name="court_complex_code"]',
-  'select[id*="bench"]',
-  'select[name*="bench"]',
-  'select[name*="court_complex"]',
-  'select#bench'
-];
-
-const CASE_TYPE_SELECTOR_CANDIDATES = [
-  'select#case_type',
-  'select[name="case_type"]',
-  'select[name*="case_type"]',
-  'select#caseType',
-  'select[id*="caseType"]',
-  'select[id*="case_type"]'
-];
-
-const CASE_TYPE_OPTION_REGEX = /\bA\s*-?\s*227\b|MATTERS\s+UNDER\s+ARTICLE\s+227/i;
-const HIGH_COURT_OPTION_REGEX = /allahabad/i;
-const BENCH_OPTION_REGEX = /\b(allahabad|lucknow)\b/i;
-
-function regexSource(optionMatcher) {
-  return optionMatcher instanceof RegExp ? optionMatcher.source : String(optionMatcher);
-}
-
-function owningPage(scope) {
-  return typeof scope?.page === 'function' ? scope.page() : scope;
-}
-
-async function waitForDropdownOption(scope, selectors, optionRegex, timeout = 8000) {
-  const deadline = Date.now() + timeout;
-  const matcherSource = regexSource(optionRegex);
-  while (Date.now() < deadline) {
-    for (const selector of selectors) {
-      const dropdown = scope.locator(selector).first();
-      if (!(await dropdown.count())) continue;
-      if (!await dropdown.isVisible().catch(() => false)) continue;
-      const hasMatch = await dropdown.evaluate((el, regexSource) => {
-        const regex = new RegExp(regexSource, 'i');
-        return Array.from(el.options || []).some((opt) => regex.test(opt.textContent || '') || regex.test(opt.value || ''));
+ // scrape_allahabad.js (Modified - Clicks sess_state_code after Case Type)
+ // Automates: Case Status -> Case Type tab click -> Click sess_state_code -> Allahabad High Court (court+bench)
+ const { chromium } = require('playwright');
+ const fs = require('fs');
+ const path = require('path');
+ const DOWNLOAD_BASE = path.resolve(__dirname, 'downloads');
+ const HUMAN_DELAY = 400;
+ const NAV_TIMEOUT = 45_000;
+ const SLOW_NET_WAIT = 2500;
+ function ensureDir(p) { if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); }
+ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+ const HIGH_COURT_SELECTOR_CANDIDATES = [
+ 'select#sess_state_code',
+ 'select[name="sess_state_code"]',
+ 'select[id*="highcourt"]',
+ 'select[name*="highcourt"]',
+ 'select[name*="high_court"]',
+ 'select#highcourt',
+ 'select[name*="court_code"]',
+ 'select#court_code'
+ ];
+ const BENCH_SELECTOR_CANDIDATES = [
+ 'select#court_complex_code',
+ 'select[name="court_complex_code"]',
+ 'select[id*="bench"]',
+ 'select[name*="bench"]',
+ 'select[name*="court_complex"]',
+ 'select#bench'
+ ];
+ const HIGH_COURT_OPTION_REGEX = /allahabad/i;
+ const BENCH_OPTION_REGEX = /\b(allahabad|lucknow)\b/i;
+ function regexSource(optionMatcher) {
+ return optionMatcher instanceof RegExp ? optionMatcher.source : String(optionMatcher);
+ }
+ function owningPage(scope) {
+ return typeof scope?.page === 'function' ? scope.page() : scope;
+ }
+ async function waitForDropdownOption(scope, selectors, optionRegex, timeout = 8000) {
+ const deadline = Date.now() + timeout;
+ const matcherSource = regexSource(optionRegex);
+ while (Date.now() < deadline) {
+ for (const selector of selectors) {
+ const dropdown = scope.locator(selector).first();
+ if (!(await dropdown.count())) continue;
+ if (!await dropdown.isVisible().catch(() => false)) continue;
+ const hasMatch = await dropdown.evaluate((el, regexSource) => {
+ const regex = new RegExp(regexSource, 'i');
+        return Array.from(el.options || []).some((opt) => regex.test(opt.textContent || '') || 
+regex.test(opt.value || ''));
       }, matcherSource).catch(() => false);
       if (hasMatch) return true;
     }
     await wait(200);
   }
   return false;
-}
-
+ }
+ 
 async function selectDropdownOption(scope, selectors, optionRegex, label) {
-  const matcherSource = regexSource(optionRegex);
+  const matcherSource = regexSource(optionMatcher);
   for (const selector of selectors) {
     const dropdown = scope.locator(selector).first();
     if (!(await dropdown.count())) continue;
@@ -117,8 +95,8 @@ async function selectDropdownOption(scope, selectors, optionRegex, label) {
   }
   console.warn(`${label}: unable to locate dropdown or matching option.`);
   return false;
-}
-
+ }
+ 
 async function selectFromScopes(scopes, selectors, optionRegex, label) {
   for (const scope of scopes) {
     try {
@@ -128,51 +106,12 @@ async function selectFromScopes(scopes, selectors, optionRegex, label) {
     } catch {}
   }
   return null;
-}
-
-async function selectOptionFromDropdown(dropdown, optionRegex, label) {
-  if (!dropdown) return false;
-  try { await dropdown.scrollIntoViewIfNeeded().catch(() => {}); } catch {}
-
-  const match = await dropdown.evaluate((el, regexSource) => {
-    const regex = new RegExp(regexSource, 'i');
-    const opts = Array.from(el.options || []).map((opt) => ({
-      text: (opt.textContent || '').trim(),
-      value: opt.value,
-    }));
-    return opts.find((opt) => regex.test(opt.text) || regex.test(opt.value)) || null;
-  }, regexSource(optionRegex)).catch(() => null);
-
-  if (!match) return false;
-
-  await dropdown.selectOption(match.value).catch(async () => {
-    await dropdown.selectOption({ label: match.text }).catch(async () => {
-      await dropdown.evaluate((el, value) => {
-        el.value = value;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-      }, match.value);
-    });
-  });
-
-  const confirmed = await dropdown.evaluate((el, regexSource) => {
-    const regex = new RegExp(regexSource, 'i');
-    const opt = el.options?.[el.selectedIndex];
-    if (!opt) return false;
-    const text = (opt.textContent || '').trim();
-    return regex.test(text) || regex.test(opt.value || '');
-  }, regexSource(optionRegex)).catch(() => false);
-
-  if (confirmed) console.log(`${label}: selected "${match.text || match.value}"`);
-  else console.warn(`${label}: selection may not have stuck.`);
-
-  return confirmed;
-}
-
+ }
+ 
 async function selectFirstSelectableOption(dropdown, label) {
   if (!dropdown) return false;
   try { await dropdown.scrollIntoViewIfNeeded().catch(() => {}); } catch {}
-
+ 
   const option = await dropdown.evaluate((el) => {
     const opts = Array.from(el.options || []);
     const candidate = opts.find((opt) => {
@@ -186,9 +125,9 @@ async function selectFirstSelectableOption(dropdown, label) {
     if (!candidate) return null;
     return { value: candidate.value, text: (candidate.textContent || '').trim() };
   }).catch(() => null);
-
+ 
   if (!option) return false;
-
+ 
   let manualDispatch = false;
   await dropdown.selectOption(option.value).catch(async () => {
     await dropdown.selectOption({ label: option.text }).catch(async () => {
@@ -206,7 +145,7 @@ async function selectFirstSelectableOption(dropdown, label) {
       el.dispatchEvent(new Event('change', { bubbles: true }));
     }).catch(() => {});
   }
-
+ 
   const confirmed = await dropdown.evaluate((el, value, text) => {
     const opt = el.options?.[el.selectedIndex];
     if (!opt) return false;
@@ -214,13 +153,13 @@ async function selectFirstSelectableOption(dropdown, label) {
     const selectedText = (opt.textContent || '').trim();
     return selectedValue === value || selectedText === text;
   }, option.value, option.text).catch(() => false);
-
+ 
   if (confirmed) console.log(`${label}: selected "${option.text || option.value}"`);
   else console.warn(`${label}: fallback selection may not have stuck.`);
-
+ 
   return confirmed;
-}
-
+ }
+ 
 async function buildGenericScopes(scope) {
   const page = owningPage(scope);
   const scopes = [];
@@ -236,18 +175,19 @@ async function buildGenericScopes(scope) {
   try { push(await getFormScope(page)); } catch {}
   for (const frame of page.frames()) push(frame);
   return scopes;
-}
-
+ }
+ 
 async function selectHighCourt(scope) {
   const scopes = await buildGenericScopes(scope);
   return selectFromScopes(scopes, HIGH_COURT_SELECTOR_CANDIDATES, HIGH_COURT_OPTION_REGEX, 'High Court');
-}
-
+ }
+ 
 async function selectBench(scope) {
   const scopes = await buildGenericScopes(scope);
-  const matchedScope = await selectFromScopes(scopes, BENCH_SELECTOR_CANDIDATES, BENCH_OPTION_REGEX, 'Bench');
+  const matchedScope = await selectFromScopes(scopes, BENCH_SELECTOR_CANDIDATES, BENCH_OPTION_REGEX, 
+'Bench');
   if (matchedScope) return matchedScope;
-
+ 
   const deadline = Date.now() + 8000;
   const joinedSelectors = BENCH_SELECTOR_CANDIDATES.join(', ');
   while (Date.now() < deadline) {
@@ -271,9 +211,8 @@ async function selectBench(scope) {
   }
   console.warn('Bench: unable to locate dropdown with usable options, please select manually.');
   return null;
-}
-
-// Gracefully click any visible "OK" button rendered as part of a JS modal (not a native alert).
+ }
+ 
 async function dismissVisibleOk(page, timeout = 4000) {
   const deadline = Date.now() + timeout;
   const targets = () => [page, ...page.frames()];
@@ -296,8 +235,8 @@ async function dismissVisibleOk(page, timeout = 4000) {
     await wait(200);
   }
   return false;
-}
-
+ }
+ 
 async function getFormScope(page) {
   for (const f of page.frames()) if (await f.locator('#searchbtn').count().catch(() => 0)) return f;
   for (const f of page.frames()) {
@@ -305,8 +244,8 @@ async function getFormScope(page) {
     if (hasAny) return f;
   }
   return page;
-}
-
+ }
+ 
 async function ensureCaseTypeTab(page) {
   const scopes = [page, ...page.frames()];
   const tabSelectors = [
@@ -319,7 +258,7 @@ async function ensureCaseTypeTab(page) {
     'button:has-text("Case Type")',
     'div:has-text("Case Type")'
   ];
-
+ 
   let clicked = false;
   for (const scope of scopes) {
     for (const selector of tabSelectors) {
@@ -338,7 +277,7 @@ async function ensureCaseTypeTab(page) {
     }
     if (clicked) break;
   }
-
+ 
   if (!clicked) {
     await page.evaluate(() => {
       try {
@@ -351,39 +290,97 @@ async function ensureCaseTypeTab(page) {
     }).catch(() => {});
     await wait(400);
   }
-
-  const formScope = await getFormScope(page);
-  const dropdownSelector = CASE_TYPE_SELECTOR_CANDIDATES.join(', ');
-  const dropdown = formScope.locator(dropdownSelector).first();
-  if (await dropdown.count()) {
-    await dropdown.waitFor({ state: 'visible', timeout: 4000 }).catch(() => {});
-    return true;
-  }
-  return false;
-}
-
-async function buildCaseTypeScopes(page, baseScope) {
-  const scopes = [];
-  const seen = new Set();
-  const push = (s) => { if (s && !seen.has(s)) { seen.add(s); scopes.push(s); } };
-  push(baseScope);
-  push(page);
-  const formScope = await getFormScope(page);
-  push(formScope);
-  for (const frame of page.frames()) push(frame);
-  return scopes;
-}
-
-async function locateCaseTypeDropdown(scopes) {
+ 
+  return clicked;
+ }
+ 
+async function clickAndSelectSessStateCode(page) {
+  const scopes = [page, ...page.frames()];
+  
   for (const scope of scopes) {
-    const dropdown = scope.locator('select').filter({
-      has: scope.locator('option', { hasText: CASE_TYPE_OPTION_REGEX }),
-    }).first();
-    if (await dropdown.count()) return dropdown;
+    const dropdown = scope.locator('select#sess_state_code').first();
+    if (!(await dropdown.count())) continue;
+    
+    try {
+      await dropdown.scrollIntoViewIfNeeded().catch(() => {});
+      await dropdown.click({ timeout: 2000 });
+      console.log('Successfully clicked select#sess_state_code');
+      
+      // Wait a moment for the dropdown to be ready
+      await wait(500);
+      
+      // Select "Allahabad High Court"
+      const match = await dropdown.evaluate((el) => {
+        const regex = /allahabad/i;
+        const opts = Array.from(el.options || []).map((opt) => ({
+          text: (opt.textContent || '').trim(),
+          value: opt.value,
+        }));
+        return opts.find((opt) => regex.test(opt.text) || regex.test(opt.value)) || null;
+      });
+      
+      if (!match) {
+        console.warn('Allahabad High Court option not found in sess_state_code dropdown');
+        return false;
+      }
+      
+      // Attempt to select the option
+      let manualDispatch = false;
+      await dropdown.selectOption(match.value).catch(async () => {
+        await dropdown.selectOption({ label: match.text }).catch(async () => {
+          await dropdown.evaluate((el, value) => {
+            el.value = value;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }, match.value);
+          manualDispatch = true;
+        });
+      });
+      
+      if (!manualDispatch) {
+        await dropdown.evaluate((el) => {
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }).catch(() => {});
+      }
+      
+      console.log(`sess_state_code: selected "${match.text || match.value}"`);
+      return true;
+      
+    } catch (e) {
+      console.log('Attempting alternate method for sess_state_code...');
+      try {
+        await dropdown.dispatchEvent('click').catch(() => {});
+        await dropdown.focus().catch(() => {});
+        await wait(500);
+        
+        // Try selecting via evaluate
+        const success = await dropdown.evaluate((el) => {
+          const regex = /allahabad/i;
+          const opts = Array.from(el.options || []);
+          const match = opts.find((opt) => regex.test(opt.textContent || '') || regex.test(opt.value || 
+''));
+          if (match) {
+            el.value = match.value;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+          }
+          return false;
+        });
+        
+        if (success) {
+          console.log('Selected Allahabad High Court using alternate method');
+          return true;
+        }
+      } catch {}
+    }
   }
-  return null;
-}
-
+  
+  console.warn('Unable to click and select in select#sess_state_code - element not found');
+  return false;
+ }
+ 
 async function selectByLabel(scope, labelRegex, optionRegex) {
   const label = scope.getByLabel(labelRegex, { exact: false });
   if (await label.count()) {
@@ -393,222 +390,351 @@ async function selectByLabel(scope, labelRegex, optionRegex) {
     return true;
   }
   return false;
-}
-
-async function selectCaseType(scope) {
-  const page = owningPage(scope);
-  await ensureCaseTypeTab(page);
-
-  const deadline = Date.now() + 15_000;
-  let dropdown = null;
-  while (Date.now() < deadline) {
-    const scopes = await buildCaseTypeScopes(page, scope);
-    dropdown = await locateCaseTypeDropdown(scopes);
-    if (dropdown) break;
-    await wait(300);
+ }
+ 
+// New function to click element with id "CScaseType"
+ async function clickCScaseType(page) {
+  console.log('Looking for element with id "CScaseType"...');
+  await wait(1500); // Time gap before starting
+  
+  const scopes = [page, ...page.frames()];
+  
+  for (const scope of scopes) {
+    const element = scope.locator('#CScaseType').first();
+    if (await element.count() > 0 && await element.isVisible().catch(() => false)) {
+      try {
+        await element.scrollIntoViewIfNeeded().catch(() => {});
+        await element.click({ timeout: 2000 });
+        console.log('Successfully clicked element with id "CScaseType"');
+        await wait(1000); // Time gap after click
+        return true;
+      } catch (e) {
+        console.log('Click failed, trying alternative method...');
+        try {
+          await element.dispatchEvent('click');
+          console.log('Dispatched click event to element');
+          await wait(1000);
+          return true;
+        } catch (e2) {
+          console.log('Dispatch also failed');
+        }
+      }
+    }
   }
-
-  if (!dropdown) {
-    console.warn('Case Type: dropdown not found or option unavailable, unable to select.');
+  
+  console.warn('Could not find or click element with id "CScaseType"');
+  return false;
+ }
+ 
+// New function to select radio button with id "radDCT"
+ async function selectRadDCT(page) {
+  console.log('Looking for radio button with id "radDCT"...');
+  await wait(1200); // Time gap before selecting
+  
+  const scopes = [page, ...page.frames()];
+  
+  for (const scope of scopes) {
+    const radioButton = scope.locator('#radDCT').first();
+    if (await radioButton.count() > 0) {
+      try {
+        await radioButton.scrollIntoViewIfNeeded().catch(() => {});
+        
+        // Check if it's not already selected
+        const isSelected = await radioButton.isChecked().catch(() => false);
+        if (!isSelected) {
+          await radioButton.click({ timeout: 2000 });
+          console.log('Successfully selected radio button with id "radDCT"');
+        } else {
+          console.log('Radio button "radDCT" was already selected');
+        }
+        
+        await wait(800); // Time gap after selecting
+        return true;
+      } catch (e) {
+        console.log('Selection failed, trying alternative method...');
+        try {
+          await radioButton.evaluate((el) => {
+            el.checked = true;
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            el.dispatchEvent(new Event('click', { bubbles: true }));
+          });
+          console.log('Set radio button state via JavaScript');
+          await wait(800);
+          return true;
+        } catch (e2) {
+          console.log('Alternative method also failed');
+        }
+      }
+    }
+  }
+  
+  console.warn('Could not find or select radio button with id "radDCT"');
+  return false;
+ }
+ 
+// New function to click input field and then input value "2018" in field with id "search_year"
+ async function inputSearchYear(page) {
+  console.log('Looking for input field with id "search_year"...');
+  await wait(1300); // Time gap before starting
+  
+  const scopes = [page, ...page.frames()];
+  
+  for (const scope of scopes) {
+    const inputField = scope.locator('#search_year').first();
+    if (await inputField.count() > 0) {
+      try {
+        await inputField.scrollIntoViewIfNeeded().catch(() => {});
+        
+        // First click the input field to focus it
+        await inputField.click({ timeout: 2000 });
+        console.log('Successfully clicked input field with id "search_year"');
+        await wait(500); // Short gap after click
+        
+        // Clear existing value and input 2018
+        await inputField.fill('', { timeout: 1000 }).catch(() => {});
+        await inputField.type('2018', { delay: 100, timeout: 2000 });
+        console.log('Successfully entered "2018" in search_year field');
+        
+        await wait(900); // Time gap after input
+        return true;
+      } catch (e) {
+        console.log('Input failed, trying alternative method...');
+        try {
+          await inputField.evaluate((el) => {
+            el.focus();
+            el.value = '2018';
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          });
+          console.log('Set input value via JavaScript with focus');
+          await wait(900);
+          return true;
+        } catch (e2) {
+          console.log('Alternative method also failed');
+        }
+      }
+    }
+  }
+  
+  console.warn('Could not find or input value in field with id "search_year"');
+  return false;
+ }
+ 
+// New function to select from dropdown with id "case_type44"
+ async function selectCaseType44(page) {
+  console.log('Looking for select dropdown with id "case_type44"...');
+  await wait(1200); // Time gap before selecting
+  
+  const scopes = [page, ...page.frames()];
+  
+  for (const scope of scopes) {
+    const dropdown = scope.locator('#case_type44').first();
+    if (await dropdown.count() > 0) {
+      try {
+        await dropdown.scrollIntoViewIfNeeded().catch(() => {});
+        
+        // Click the dropdown to open it
+        await dropdown.click({ timeout: 2000 });
+        console.log('Successfully clicked select dropdown with id "case_type44"');
+        await wait(800); // Wait for dropdown to open
+        
+        // Select the first non-disabled, non-empty option
+        const success = await selectFirstSelectableOption(dropdown, 'case_type44');
+        if (success) {
+          await wait(800); // Time gap after selection
+          return true;
+        }
+      } catch (e) {
+        console.log('Selection failed, trying alternative method...');
+        try {
+          // Alternative: select via JavaScript
+          const selected = await dropdown.evaluate((el) => {
+            const options = Array.from(el.options || []);
+            const selectableOption = options.find(opt => 
+              !opt.disabled && 
+              opt.value && 
+              !/select|choose/i.test(opt.textContent || '')
+            );
+            
+            if (selectableOption) {
+              el.value = selectableOption.value;
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+              return { value: selectableOption.value, text: selectableOption.textContent };
+            }
+            return null;
+          });
+          
+          if (selected) {
+            console.log(`case_type44: selected "${selected.text || selected.value}" via JavaScript`);
+            await wait(800);
+            return true;
+          }
+        } catch (e2) {
+          console.log('Alternative method also failed');
+        }
+      }
+    }
+  }
+  
+  console.warn('Could not find or select from dropdown with id "case_type44"');
+  return false;
+ }
+ 
+// Function to wait for new page with #showList div
+ 
+// Function to wait for new page with #showList div that's visible (display not none)
+ async function waitForResultsPage(page) {
+  console.log('\n⏳Waiting for you to complete CAPTCHA and click Go...');
+  console.log('Monitoring for visible results page...');
+  
+  const startTime = Date.now();
+  const maxWaitTime = 120000; // 2 minutes
+  
+  while (Date.now() - startTime < maxWaitTime) {
+    // Check for #showList div in all scopes that's actually visible
+    const scopes = [page, ...page.frames()];
+    
+    for (const scope of scopes) {
+      const showListDiv = scope.locator('#showList').first();
+      if (await showListDiv.count() > 0) {
+        // Check if the div is actually visible (display not none)
+        const isVisible = await showListDiv.isVisible().catch(() => false);
+        if (isVisible) {
+          console.log('✅Results page detected! Found #showList div that is visible');
+          await wait(2000); // Wait for page to fully settle
+          return true;
+        } else {
+          console.log('⏳#showList div exists but is hidden (display: none), waiting...');
+        }
+      }
+    }
+    
+    await wait(3000); // Check every 3 seconds
+    process.stdout.write(`\r
+ ⏰
+ Waiting for visible results... ${Math.floor((Date.now() - startTime) / 
+1000)}s`);
+  }
+  
+  console.log('\n⏰Timeout waiting for visible results page');
+  return false;
+ }
+ // Function to click first element with class "someclass"
+ async function clickFirstSomeClass(page) {
+  console.log('Looking for first element with class "someclass"...');
+  await wait(1500); // Time gap
+  
+  const scopes = [page, ...page.frames()];
+  
+  for (const scope of scopes) {
+    const elements = scope.locator('.someclass');
+    const count = await elements.count();
+    
+    if (count > 0) {
+      try {
+        const firstElement = elements.first();
+        await firstElement.scrollIntoViewIfNeeded();
+        await firstElement.click({ timeout: 3000 });
+        console.log(`
+ ✅
+ Successfully clicked first .someclass element (${count} total found)`);
+        await wait(1000);
+        return true;
+      } catch (e) {
+        console.log('Click failed, trying alternative...');
+        try {
+          await firstElement.dispatchEvent('click');
+          console.log('Dispatched click event to first .someclass element');
+          await wait(1000);
+          return true;
+        } catch (e2) {
+          console.log('Alternative method failed');
+        }
+      }
+    }
+  }
+  
+  console.warn('No elements with class "someclass" found');
+  return false;
+ }
+ 
+// Function to download all PDFs from order_table - SIMPLIFIED VERSION
+ async function downloadTablePDFs(page, context, viewButtonIndex = 1) {
+  console.log(`Looking for PDFs in table with class "order_table" for View ${viewButtonIndex}...`);
+  await wait(1500);
+  
+  try {
+    const rows = page.locator('table.order_table tr');
+    const rowCount = await rows.count();
+    
+    if (rowCount <= 1) {
+      console.log('No data rows found in order_table');
+      return false;
+    }
+ 
+    console.log(`Found ${rowCount - 1} PDFs to download`);
+    
+    let successCount = 0;
+    
+    for (let i = 1; i < rowCount; i++) {
+      const row = rows.nth(i);
+      const link = row.locator('a[href*="display_pdf.php"]').first();
+      
+      if (await link.count() > 0) {
+        const relativeUrl = await link.getAttribute('href');
+        const absoluteUrl = new URL(relativeUrl, page.url()).href;
+        
+        console.log(`Downloading PDF ${i}/${rowCount - 1}:`);
+        
+        try {
+          // Use request context to download the PDF
+          const response = await context.request.get(absoluteUrl);
+          
+          if (response.status() === 200) {
+            const pdfBuffer = await response.body();
+            // Create unique filename with view button index and PDF index
+            const filename = `view_${viewButtonIndex}_pdf_${i}.pdf`;
+            
+            fs.writeFileSync(path.join(__dirname, filename), pdfBuffer);
+            console.log(`
+ ✅
+ Saved: ${filename} (${pdfBuffer.length} bytes)`);
+            successCount++;
+          } else {
+            console.log(`
+ ❌
+ PDF ${i}: HTTP ${response.status()} - ${response.statusText()}`);
+          }
+          
+        } catch (error) {
+          console.log(`
+ ❌
+ PDF ${i}: ${error.message}`);
+        }
+      }
+      
+      // Delay between downloads
+      if (i < rowCount - 1) {
+        await wait(1000);
+      }
+    }
+    
+    console.log(`
+ 📊
+ View ${viewButtonIndex} summary: ${successCount}/${rowCount - 1} PDFs downloaded`);
+    return successCount > 0;
+    
+  } catch (error) {
+    console.log('Error processing order_table:', error.message);
     return false;
   }
-
-  return selectOptionFromDropdown(dropdown, CASE_TYPE_OPTION_REGEX, 'Case Type');
-}
-
-async function selectYear(scope, year) {
-  const byLabel = scope.getByLabel(/year/i);
-  if (await byLabel.count()) {
-    await byLabel.selectOption(String(year)).catch(async () => {
-      await byLabel.selectOption({ label: new RegExp(String(year)) }).catch(() => {});
-    });
-    return;
-  }
-  const sel = scope.locator('select[name*="year"], select#year');
-  if (await sel.count()) {
-    await sel.first().selectOption(String(year)).catch(async () => {
-      await sel.first().selectOption({ label: new RegExp(String(year)) }).catch(() => {});
-    });
-  }
-}
-
-async function clickSearch(page) {
-  const scope = await getFormScope(page);
-  let btn = scope.locator('#searchbtn:visible').first();
-  if (!(await btn.count())) {
-    btn = scope.getByRole('button', { name: /search|submit|go/i }).first();
-    if (!(await btn.count())) btn = scope.getByRole('link', { name: /search/i }).first();
-  }
-  try {
-    if (await btn.count()) {
-      await btn.scrollIntoViewIfNeeded().catch(() => {});
-      await btn.click({ timeout: 5000 });
-      await scope.waitForLoadState('domcontentloaded').catch(() => {});
-      await wait(SLOW_NET_WAIT);
-      return;
-    }
-  } catch {}
-  try {
-    await scope.evaluate(() => { if (typeof window.funViewCinoHistory === 'function') window.funViewCinoHistory(); });
-    await scope.waitForLoadState?.('domcontentloaded').catch(() => {});
-    await wait(SLOW_NET_WAIT);
-    return;
-  } catch {}
-  await page.evaluate(() => { if (typeof window.funViewCinoHistory === 'function') window.funViewCinoHistory(); }).catch(() => {});
-  await page.waitForLoadState('domcontentloaded').catch(() => {});
-  await wait(SLOW_NET_WAIT);
-}
-
-async function downloadFromLinks(scope, linkLocator, outDir) {
-  const cnt = await linkLocator.count();
-  let downloaded = 0;
-  let skipped = 0;
-
-  for (let j = 0; j < cnt; j++) {
-    const link = linkLocator.nth(j);
-    let label = await link.innerText().catch(() => `order_${j + 1}`);
-    label = sanitize(label || `order_${j + 1}`);
-    const targetPath = path.join(outDir, `${label}.pdf`);
-    if (fs.existsSync(targetPath)) {
-      console.log('    -> Skipping existing file:', targetPath);
-      skipped++;
-      continue;
-    }
-
-    const [popupP, downloadP] = [
-      scope.page().waitForEvent('popup').catch(() => null),
-      scope.page().waitForEvent('download').catch(() => null)
-    ];
-    await link.click({ button: 'middle' }).catch(async () => { await link.click().catch(() => {}); });
-
-    const popup = await popupP;
-    const download = await downloadP;
-
-    if (download) {
-      const suggested = sanitize(download.suggestedFilename());
-      const ext = path.extname(suggested).toLowerCase() || '.pdf';
-      const finalPath = targetPath.endsWith('.pdf') ? targetPath : `${targetPath}${ext}`;
-      await download.saveAs(finalPath).catch(() => {});
-      await wait(250);
-      if (fs.existsSync(finalPath)) {
-        console.log('    -> Saved via download:', finalPath);
-        downloaded++;
-      } else {
-        console.warn('    -> Download event fired but file missing:', finalPath);
-      }
-    } else if (popup) {
-      try {
-        await popup.waitForLoadState('load', { timeout: 15000 });
-        const url = popup.url();
-        if (/\.pdf($|\?)/i.test(url)) {
-          const resp = await popup.waitForResponse((r) => r.url() === url && r.status() === 200, { timeout: 10000 }).catch(() => null);
-          const buf = resp ? await resp.body().catch(() => null) : null;
-          if (buf) {
-            fs.writeFileSync(targetPath, buf);
-            console.log('    -> Saved via popup fetch:', targetPath);
-            downloaded++;
-          } else {
-            console.warn('    -> Popup returned no data for URL:', url);
-          }
-        } else {
-          console.warn('    -> Popup URL did not look like a PDF:', url);
-        }
-      } catch (err) {
-        console.warn('    -> Popup handling failed:', err?.message || err);
-      }
-      if (!popup.isClosed()) await popup.close().catch(() => {});
-      await wait(250);
-    } else {
-      console.warn('    -> No download or popup detected for:', label);
-    }
-  }
-
-  return { downloaded, skipped, attempted: cnt };
-}
-
-async function downloadAllOrders(scopePage, outDir) {
-  const orderLinks =
-    scopePage.getByRole('link', { name: /order|download|pdf/i })
-      .or(scopePage.getByRole('button', { name: /order|download|pdf/i }))
-      .or(scopePage.locator('a[href*=".pdf" i], a[href*="download" i], a[href*="order" i]'));
-
-  let n = await orderLinks.count().catch(() => 0);
-  if (n) return downloadFromLinks(scopePage, orderLinks, outDir);
-
-  for (const f of scopePage.frames()) {
-    const inner =
-      f.getByRole('link', { name: /order|download|pdf/i })
-        .or(f.getByRole('button', { name: /order|download|pdf/i }))
-        .or(f.locator('a[href*=".pdf" i], a[href*="download" i], a[href*="order" i]'));
-    if (await inner.count()) return downloadFromLinks(f, inner, outDir);
-  }
-
-  console.log('    -> No order links detected for this case.');
-  return { downloaded: 0, skipped: 0, attempted: 0 };
-}
-
-async function processResultPages(page, yearOutputDir) {
-  let scope = await getFormScope(page);
-
-  while (true) {
-    const captcha = scope.getByText(/captcha|enter code|verify/i).first();
-    if (await captcha.isVisible().catch(() => false)) { console.log('CAPTCHA detected - solve it in the browser. Waiting 20s...'); await wait(20000); }
-
-    let viewButtons = scope.getByRole('link', { name: /^view$/i })
-      .or(scope.getByRole('button', { name: /^view$/i }))
-      .or(scope.getByText(/^view$/i).locator('xpath=ancestor-or-self::a|ancestor-or-self::button'));
-
-    let count = await viewButtons.count().catch(() => 0);
-    if (!count) {
-      const f = page.frames().find(fr => /result|case/i.test(fr.url()) || /result/i.test(fr.name()));
-      if (f) { scope = f; continue; }
-    }
-
-    for (let i = 0; i < count; i++) {
-      const btn = viewButtons.nth(i);
-      let caseLabel = `case_${i + 1}`;
-      try {
-        const row = await btn.locator('xpath=ancestor::tr[1]').innerText({ timeout: 2000 }).catch(() => '');
-        const m = row.match(/(CNR\s*:\s*\w+|\b\d{1,6}\/\d{4}\b)/i);
-        caseLabel = sanitize(m ? m[1].replace(/\s+/g, '_') : row.split('\n')[0] || caseLabel);
-      } catch {}
-      const caseDir = path.join(yearOutputDir, caseLabel);
-      ensureDir(caseDir);
-      console.log(`  - Case: ${caseLabel}`);
-
-      const [maybePopup] = await Promise.all([
-        page.waitForEvent('popup').catch(() => null),
-        btn.click({ delay: 50 })
-      ]);
-
-      const casePage = maybePopup ?? page;
-      if (maybePopup) { await maybePopup.waitForLoadState('domcontentloaded').catch(() => {}); await wait(SLOW_NET_WAIT); }
-      else { await wait(1200); }
-
-      let stats = { downloaded: 0, skipped: 0, attempted: 0 };
-      try { stats = await downloadAllOrders(casePage, caseDir); } catch (e) { console.warn('Order download error:', e.message); }
-      console.log(`    -> Orders downloaded: ${stats.downloaded}, skipped: ${stats.skipped}, links found: ${stats.attempted}`);
-
-      if (maybePopup && !maybePopup.isClosed()) { await maybePopup.close().catch(() => {}); await wait(300); }
-    }
-
-    const nextBtn = scope.getByRole('link', { name: /^next$/i })
-      .or(scope.getByRole('button', { name: /^next$/i }))
-      .or(scope.getByText(/^next$/i).locator('xpath=ancestor-or-self::a|ancestor-or-self::button'));
-    if (await nextBtn.first().isVisible().catch(() => false) && await nextBtn.first().isEnabled().catch(() => false)) {
-      await nextBtn.first().click().catch(() => {});
-      await wait(SLOW_NET_WAIT);
-      scope = await getFormScope(page);
-      continue;
-    }
-    break;
-  }
-}
-
+ }
+ 
 (async function run() {
   ensureDir(DOWNLOAD_BASE);
-
-  const browser = await chromium.launch({ headless: false, args: ['--disable-blink-features=AutomationControlled'] });
+ 
+  const browser = await chromium.launch({ headless: false, args: ['--disable-blinkfeatures=AutomationControlled'] });
   const context = await browser.newContext({
     acceptDownloads: true,
     viewport: { width: 1400, height: 850 },
@@ -616,13 +742,14 @@ async function processResultPages(page, yearOutputDir) {
   });
   const page = await context.newPage();
   page.setDefaultTimeout(NAV_TIMEOUT);
-
+ 
   // Global safety: auto-accept stray JS alerts
   page.on('dialog', async (d) => { try { await d.accept(); } catch {} });
-
-  await page.goto('https://hcservices.ecourts.gov.in/hcservices/main.php#', { waitUntil: 'domcontentloaded' });
+ 
+  await page.goto('https://hcservices.ecourts.gov.in/hcservices/main.php#', { waitUntil: 
+'domcontentloaded' });
   await wait(SLOW_NET_WAIT);
-
+ 
   // Click "Case Status" and IMMEDIATELY accept the "Please Select Highcourt and Bench..." alert.
   const caseStatusLink = page.getByRole('link', { name: /case status/i }).or(page.getByText(/case status/i));
   await Promise.race([
@@ -636,70 +763,150 @@ async function processResultPages(page, yearOutputDir) {
   const late = await page.waitForEvent('dialog', { timeout: 2000 }).catch(() => null);
   if (late) { console.log('Late popup:', late.message()); await late.accept(); }
   await dismissVisibleOk(page).catch(() => {});
-
+ 
   await page.waitForLoadState('domcontentloaded');
   await wait(SLOW_NET_WAIT);
-
-  await ensureCaseTypeTab(page);
+ 
+  // Click the "Case Type" tab/button
+  const caseTypeTabClicked = await ensureCaseTypeTab(page);
+  console.log(caseTypeTabClicked ? 'Case Type tab clicked successfully' : 'Case Type tab click may have failed');
+  
+  // Wait for a time gap after clicking Case Type
+  await wait(1500);
+  console.log('Waiting 1.5s after Case Type click...');
+  
+  // Click the sess_state_code selector
+  await clickAndSelectSessStateCode(page);
+  await wait(HUMAN_DELAY);
+  
   let formScope = await getFormScope(page);
-
-  // Court & Bench (idempotent)
+ 
+  // Court & Bench selection
   let highCourtScope = formScope;
-  const highCourtViaLabel = await selectByLabel(formScope, /high\s*court/i, /allahabad/i).catch(() => false);
+  const highCourtViaLabel = await selectByLabel(formScope, /high\s*court/i, /allahabad/i).catch(() => 
+false);
   if (!highCourtViaLabel) {
     const selectedScope = await selectHighCourt(formScope);
     if (selectedScope) highCourtScope = selectedScope;
     else console.warn('High Court: selection helper did not find a matching dropdown.');
   }
   await wait(HUMAN_DELAY);
+  
   const benchScope = await selectBench(highCourtScope);
   if (!benchScope) console.warn('Bench: selection helper did not find a matching dropdown.');
   await wait(HUMAN_DELAY);
-
-  const initialCaseType = await selectCaseType(formScope);
-  if (!initialCaseType) console.warn('Case Type: initial selection failed, please verify manually.');
-  await wait(HUMAN_DELAY);
-
-  for (let year = START_YEAR; year <= END_YEAR; year++) {
-    console.log(`\n=== YEAR ${year} ===`);
-    const yearDir = path.join(DOWNLOAD_BASE, String(year));
-    ensureDir(yearDir);
-
-    formScope = await getFormScope(page);
-    await ensureCaseTypeTab(page);
-
-    let yearHighCourtScope = formScope;
-    const highCourtViaLabel = await selectByLabel(formScope, /high\s*court/i, /allahabad/i).catch(() => false);
-    if (!highCourtViaLabel) {
-      const selectedScope = await selectHighCourt(formScope);
-      if (selectedScope) yearHighCourtScope = selectedScope;
-      else console.warn('High Court: yearly selection helper did not find a matching dropdown.');
-    }
-    await wait(HUMAN_DELAY);
-    const yearBenchScope = await selectBench(yearHighCourtScope);
-    if (!yearBenchScope) console.warn('Bench: yearly selection helper did not find a matching dropdown.');
-    await wait(HUMAN_DELAY);
-
-    const caseTypeSelected = await selectCaseType(formScope);
-    if (!caseTypeSelected) console.warn('Case Type: yearly reselection failed, please verify manually.');
-    await wait(HUMAN_DELAY);
-
-    await selectYear(formScope, year);
-    await wait(HUMAN_DELAY);
-
-    await clickSearch(page);
-    await processResultPages(page, yearDir);
-
-    formScope = await getFormScope(page);
+ 
+  console.log('\nCompleted court/bench selection. Now performing additional steps...');
+ 
+  // NEW STEPS ADDED HERE:
+  
+  // 1. Click element with id "CScaseType"
+  await clickCScaseType(page);
+  
+  // 2. Select radio button with id "radDCT"
+  await selectRadDCT(page);
+  
+  // 3. Click input field and input value "2018" in field with id "search_year"
+  await inputSearchYear(page);
+  // 4. Select from dropdown with id "case_type44"
+  await selectCaseType44(page);
+ 
+  await waitForResultsPage(page);
+ 
+  console.log('\n=== STARTING ITERATIVE PDF DOWNLOAD ===');
+ 
+  // Find all "View" buttons with class "someclass" and process them one by one
+  const viewButtons = page.locator('.someclass');
+  const buttonCount = await viewButtons.count();
+ 
+  console.log(`Found ${buttonCount} "View" buttons to process`);
+ 
+  // Process only first few buttons for testing (remove this limit later)
+  const maxButtonsToProcess = buttonCount; // Process only first 10 for testing
+ 
+  for (let i = 0; i < maxButtonsToProcess; i++) {
+    console.log(`\n=== Processing View Button ${i + 1}/${maxButtonsToProcess} ===`);
+    
     try {
-      const backBtn = formScope.getByRole('link', { name: /back/i }).or(formScope.getByRole('button', { name: /back/i }));
-      if (await backBtn.first().isVisible()) { await backBtn.first().click().catch(() => {}); await wait(1200); }
-    } catch {}
+      // Re-locate buttons to avoid stale references
+      const currentButtons = page.locator('.someclass');
+      const currentButton = currentButtons.nth(i);
+      
+      if (await currentButton.count() > 0) {
+        // Click the current "View" button
+        await currentButton.scrollIntoViewIfNeeded();
+        await currentButton.click({ timeout: 3000 });
+        console.log(`
+ ✅
+ Clicked View button ${i + 1}`);
+        
+        // Wait for the details page to load
+        await wait(3000);
+        
+        // Download PDFs from the order_table on this page
+        const downloaded = await downloadTablePDFs(page, context, i + 1);
+        
+        if (downloaded) {
+          console.log(`
+ ✅
+ Completed PDF downloads for View button ${i + 1}`);
+        } else {
+          console.log(`
+ ⚠
+ No PDFs downloaded for View button ${i + 1}`);
+        }
+        
+        // Click back button to return to main results page
+        console.log('Returning to results page...');
+        const backButton = page.locator('#bckbtn').first();
+        if (await backButton.count() > 0) {
+          await backButton.click({ timeout: 2000 });
+          console.log('✅Clicked back button');
+          
+          // Wait briefly for page to stabilize (NO waitForResultsPage needed)
+          await wait(2000);
+        } else {
+          console.log('❌Back button not found, trying browser back');
+          await page.goBack();
+          await wait(2000);
+        }
+        
+      } else {
+        console.log(`
+ ❌
+ View button ${i + 1} not found, skipping`);
+      }
+      
+    } catch (error) {
+      console.log(`
+ ❌
+ Error processing View button ${i + 1}: ${error.message}`);
+      
+      // Try to recover by going back
+      try {
+        await page.goBack();
+        await wait(2000);
+      } catch (e) {
+        console.log('Could not recover navigation');
+      }
+    }
+    
+    // Delay before next iteration
+    if (i < maxButtonsToProcess - 1) {
+      await wait(1500);
+    }
   }
-
-  console.log('\nAll done.');
-  await browser.close();
-})().catch((e) => {
+ 
+  console.log(`\n
+ 🎉
+ Completed processing ${maxButtonsToProcess} View buttons!`);
+ 
+  console.log('\nAll steps completed successfully!');
+  console.log('Browser will remain open for inspection. Close manually when done.');
+  
+  // Keep browser open for inspection
+  await new Promise(() => {});
+ })().catch((e) => {
   console.error('Fatal error:', e);
   process.exit(1);
-});
+ });
