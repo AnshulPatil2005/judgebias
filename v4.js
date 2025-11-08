@@ -8,7 +8,7 @@
 
 // HOW TO RUN
 // PowerShell:
-//   $env:CASE_YEAR="2018"; $env:CASE_TYPE="A227(MATTERS)"; node scrape_allahabad.js
+//   $env:CASE_YEAR="2018"; $env:CASE_TYPE="A227(MATTERS)"; node v4.js
 // cmd.exe:
 //   set CASE_YEAR=2018 && set CASE_TYPE=A227(MATTERS) && node scrape_allahabad.js
 // bash/zsh:
